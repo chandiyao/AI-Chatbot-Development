@@ -2,43 +2,45 @@
 
 ## Overview
 
-This is a **production-ready, Machine Learning-based Automated IT Service Desk Chatbot application** built entirely in Python using Streamlit. The system combines advanced NLP, text classification, and an interactive web interface to provide instant IT support and troubleshooting assistance.
+This is a **production-ready, FAQ-based IT Service Desk Chatbot application** built entirely in Python using Streamlit. The system combines semantic search, similarity matching, and an interactive web interface to provide instant IT support and answers from a comprehensive knowledge base.
 
 ### Key Features ✨
 
-- **ML-Based Intent Classification**: Uses TF-IDF vectorization and Linear SVC for accurate intent detection
-- **4 Intent Categories**: Password Lockout, Network Issues, Hardware Issues, Software Requests
-- **Synthetic Dataset**: 60 high-quality training samples with diverse examples
-- **NLP Preprocessing**: Text cleaning, tokenization, and lemmatization
-- **Model Evaluation Metrics**: Precision, Recall, and F1-Score displayed in real-time
+- **Semantic FAQ Retrieval**: Uses TF-IDF vectorization and cosine similarity for accurate answer matching
+- **787 FAQ Entries**: Comprehensive IT support knowledge base with topics, questions, and answers
+- **Real-World Dataset**: Production-quality Q&A pairs across diverse IT categories
+- **NLP Vectorization**: TF-IDF text vectorization with stop word removal
+- **Similarity Scoring**: Real-time cosine similarity matching for relevant answers
 - **Interactive Chat UI**: Enterprise-styled Streamlit dashboard with chat history
-- **Auto-Ticketing System**: Generates support tickets with unique IDs
-- **Troubleshooting Steps**: Context-aware step-by-step instructions based on detected intent
+- **Topic Categorization**: FAQ topics displayed in sidebar for knowledge base overview
+- **Confidence Threshold**: Returns answers only when similarity score exceeds minimum threshold
 - **Zero Dependencies on External APIs**: Fully self-contained application
 
 ---
 
 ## System Architecture
 
-### 1. **Backend ML Pipeline**
+### 1. **Backend Retrieval Pipeline**
 ```
-Synthetic Data Generation
+it_support_dataset.csv (787 FAQ entries)
          ↓
-Text Preprocessing (Clean, Tokenize, Lemmatize)
+Question Column Vectorization (TF-IDF)
          ↓
-TF-IDF Vectorization
+User Query Vectorization (TF-IDF)
          ↓
-Linear SVC Classification
+Cosine Similarity Matching
          ↓
-Intent Prediction + Confidence Score
+Top Match + Confidence Score
+         ↓
+Return Question-Answer Pair
 ```
 
 ### 2. **Frontend Streamlit Interface**
-- Main dashboard with statistics
-- Sidebar with model evaluation metrics (Precision, Recall, F1-Score)
+- Main dashboard with welcome message
+- Sidebar with knowledge base statistics (total entries, topic counts)
 - Interactive chat window with message history
-- Dynamic response generation based on detected intent
-- Success notifications with ticket creation
+- Dynamic response generation with matched FAQ entry
+- Confidence threshold handling with fallback messages
 
 ---
 
@@ -59,10 +61,10 @@ streamlit run app.py
 ```
 
 The application will start and automatically:
-1. Generate the synthetic IT support dataset
-2. Preprocess the data (tokenization, lemmatization)
-3. Train the ML model (TF-IDF + LinearSVC)
-4. Evaluate the model and calculate metrics
+1. Load the it_support_dataset.csv file
+2. Clean and validate question-answer pairs
+3. Build a TF-IDF vectorizer on all questions
+4. Create a similarity matrix for fast retrieval
 5. Launch the interactive Streamlit dashboard
 
 The app will be accessible at: **http://localhost:8501**
@@ -71,29 +73,27 @@ The app will be accessible at: **http://localhost:8501**
 
 ## Application Structure
 
-### 📊 Data & Machine Learning (`Sections 1-2`)
+### 📊 Data & Retrieval Engine (`Sections 1-2`)
 
-#### Synthetic Dataset Generation
-- **60 training examples** covering 4 intent categories
-- Each category has 15 diverse, realistic examples
-- Real-world IT support ticket language
-- Categories:
-  - `password_lockout`: Authentication and account access issues
-  - `network_issue`: WiFi, VPN, and connectivity problems
-  - `hardware_issue`: Device, printer, and equipment failures
-  - `software_request`: Software installation and licensing
+#### FAQ Knowledge Base
+- **787 question-answer pairs** from it_support_dataset.csv
+- Organized by topic (Software & OS, Networking, Hardware, etc.)
+- Real-world IT support content
+- Three columns:
+  - `topic`: Category of the question (e.g., "Software & OS (Windows, Linux, macOS)")
+  - `question`: User-facing FAQ question
+  - `answer`: Detailed answer or solution
 
-#### Text Preprocessing Pipeline
-1. **Lowercasing**: Normalize text case
-2. **Special Character Removal**: Clean non-alphanumeric characters
-3. **Whitespace Normalization**: Remove extra spaces
-4. **Lemmatization**: Map words to base forms (custom mapping)
+#### Data Cleaning & Validation
+1. **Remove null entries**: Filter out missing questions or answers
+2. **Text normalization**: Strip whitespace and empty strings
+3. **Drop invalid rows**: Exclude entries with empty cleaned text
 
-#### ML Model Training
-- **Vectorizer**: TF-IDF with max 100 features and bigrams (1-2 ngrams)
-- **Classifier**: Linear SVC with max 1000 iterations
-- **Train-Test Split**: 80-20 stratified split
-- **Evaluation Metrics**: Precision, Recall, F1-Score (weighted average)
+#### Vectorization & Similarity
+- **Vectorizer**: TF-IDF with English stop words removal
+- **Similarity Metric**: Cosine similarity between user query and all FAQ questions
+- **Retrieval**: Return the FAQ pair with highest similarity score
+- **Confidence Threshold**: Default 0.15 minimum similarity (configurable)
 
 ### 🎨 Streamlit Frontend (`Sections 3-4`)
 
@@ -104,23 +104,22 @@ The app will be accessible at: **http://localhost:8501**
 - Supported issue categories with descriptions
 
 #### Sidebar Components
-- Application info and metadata
-- **AI Model Evaluation Report** (Assignment Requirement):
-  - Precision metric with delta indicator
-  - Recall metric with delta indicator
-  - F1-Score metric with delta indicator
-  - Model insights and configuration details
+- **Knowledge Base Statistics**:
+  - Total FAQ entries in the dataset
+  - Count of unique topics
+  - Top topics and their frequencies
+- Topic distribution chart
 - Clear chat history button
 
 #### Chat Interface
 - Message history display with user and bot avatars
 - Chat input field with placeholder text
-- Dynamic intent-based responses with:
-  - Issue category identification
-  - Confidence level indicator
-  - Step-by-step troubleshooting instructions
-  - Automatic ticket generation with unique ID
-- Success notification on response
+- Dynamic FAQ-based responses with:
+  - Matched question from knowledge base
+  - Corresponding answer from FAQ
+  - Topic classification if available
+  - Similarity score feedback
+- Fallback message for low-confidence matches
 
 ---
 
@@ -129,42 +128,43 @@ The app will be accessible at: **http://localhost:8501**
 ### Example Workflow
 
 1. **Open the application**: `streamlit run app.py`
-2. **Observe the sidebar**: View ML model metrics (Precision, Recall, F1-Score)
-3. **Type an issue**: Click the chat input and describe your problem
-   - Example: "I can't log into my account"
-   - Example: "My WiFi keeps disconnecting"
-   - Example: "I need Microsoft Office installed"
+2. **Observe the sidebar**: View knowledge base statistics and topic distribution
+3. **Type a question**: Click the chat input and ask an IT-related question
+   - Example: "How do I update Windows?"
+   - Example: "How do I enable dark mode in Windows 10?"
+   - Example: "How do I check disk health?"
 
 4. **Get instant response**:
-   - Intent is classified automatically
-   - Confidence score is displayed
-   - Step-by-step troubleshooting guide is provided
-   - Support ticket is generated
-   - Success message confirms ticket creation
+   - The closest FAQ question is displayed
+   - The corresponding answer is provided
+   - Topic label is shown if available
+   - Similarity score indicates match confidence
 
-5. **Clear history**: Use the sidebar button to reset chat and start fresh
+5. **Rephrase if needed**: If confidence is low, rephrase with more specific keywords or system names
 
-### Sample Issues You Can Ask
+6. **Clear history**: Use the sidebar button to reset chat and start fresh
 
-**Password Lockout:**
-- "I can't log into my account"
-- "Reset my password immediately"
-- "Account is locked"
+### Sample Questions You Can Ask
 
-**Network Issues:**
-- "Internet connection is very slow"
-- "WiFi keeps disconnecting"
-- "Cannot connect to corporate network"
+**Windows Management:**
+- "How do I check the Windows version I'm using?"
+- "How do I update Windows?"
+- "How do I factory reset Windows?"
 
-**Hardware Issues:**
-- "My laptop keyboard is broken"
-- "Monitor is not displaying properly"
-- "Printer is jammed"
+**System Configuration:**
+- "How do I manage startup programs?"
+- "How do I change screen resolution?"
+- "How do I enable dark mode?"
 
-**Software Requests:**
-- "I need Microsoft Office installed"
-- "Request for Adobe Creative Suite"
-- "Need Docker and Kubernetes tools"
+**Troubleshooting:**
+- "How do I check disk health in Windows?"
+- "How do I recover deleted files?"
+- "How do I format a USB drive?"
+
+**Networking:**
+- "How do I map a network drive?"
+- "How do I enable Remote Desktop?"
+- "How do I change the default browser?"
 
 ---
 
@@ -172,41 +172,53 @@ The app will be accessible at: **http://localhost:8501**
 
 ### Key Functions
 
-#### Data Generation
-- `generate_synthetic_dataset()`: Creates 60 IT support tickets across 4 intents
-- `preprocess_text()`: Cleans and normalizes text
-- `apply_lemmatization()`: Maps words to base forms
-- `preprocess_dataset()`: Full pipeline for data cleaning
+#### Data Loading
+- `load_support_knowledge_base()`: Loads and validates it_support_dataset.csv
+  - Returns: dataframe, vectorizer, question_matrix
+  - Handles missing or corrupted data gracefully
+  - Caches result for performance
 
-#### ML Pipeline
-- `ITServiceDeskClassifier`: Main classifier class
-  - `.train()`: Trains TF-IDF + LinearSVC model
-  - `.evaluate()`: Calculates metrics on test set
-  - `.predict()`: Predicts intent and confidence for new text
+#### Vectorization & Retrieval
+- `TfidfVectorizer`: Converts text to numerical vectors
+  - Fitted on all FAQ questions
+  - Applied to user queries
+- `cosine_similarity()`: Computes similarity between vectors
+  - Range: 0 to 1 (higher = better match)
+  - Threshold: 0.15 minimum for confident answers
 
-#### UI Components
-- `initialize_session_state()`: Sets up Streamlit session variables
-- `train_model_on_startup()`: Trains model once on app launch
-- `render_sidebar_metrics()`: Displays evaluation metrics
-- `render_chat_interface()`: Renders main chat window
-- `render_main_dashboard()`: Displays statistics and info
+#### Streamlit Components
+- `st.cache_resource`: Loads knowledge base once on startup
+- `st.chat_input()`: Captures user questions
+- `st.session_state`: Maintains chat history
+- Sidebar metrics: Knowledge base statistics
 
 #### Response Generation
-- `get_intent_response()`: Returns troubleshooting steps for each intent
+- Find best match using cosine similarity
+- Format response with question, topic, and answer
+- Return fallback message if confidence too low
 
 ---
 
-## Model Performance
+## Retrieval Performance
 
-### Expected Metrics
-- **Precision**: ~88-92% (Correctness of predictions)
-- **Recall**: ~85-90% (Coverage of all intents)
-- **F1-Score**: ~0.87-0.91 (Harmonic balance)
+### Characteristics
+- **Knowledge Base Size**: 787 FAQ pairs
+- **Vectorizer Vocabulary**: ~1,157 unique terms
+- **Query Inference Time**: <100ms per query
+- **Memory Footprint**: ~5MB (includes TF-IDF matrix)
 
-### Metrics Explanation
-- **Precision**: "Of all the predictions marked as intent X, how many were correct?"
-- **Recall**: "Of all the actual intent X issues, how many did we correctly identify?"
-- **F1-Score**: Harmonic mean of precision and recall (0-1 scale)
+### Similarity Scoring
+- **Score Range**: 0.0 to 1.0 (cosine similarity)
+- **Typical Good Match**: 0.5+ (depends on question phrasing)
+- **Confidence Threshold**: 0.15 (may require tuning based on use case)
+- **Top Match Strategy**: Returns single highest-confidence answer
+
+### To Improve Retrieval Accuracy
+1. Rephrase questions with more specific keywords
+2. Use exact system/software names when available
+3. Include error messages if applicable
+4. Try multiple phrasings if first query has low confidence
+5. Adjust similarity threshold based on your needs
 
 ---
 
@@ -234,20 +246,22 @@ AI Chatbot Development/
 
 ---
 
-## Performance & Scalability
+## Scalability & Optimization
 
 ### Current Configuration
-- Training samples: 60
-- Test samples: 15
-- Max TF-IDF features: 100
-- Inference time: < 1 second per query
+- FAQ entries: 787
+- TF-IDF vocabulary: ~1,157 features
+- Vectorization: Sparse matrix format (memory-efficient)
+- Caching: Knowledge base cached on startup
+- Inference time: <100ms per query
 
-### To Improve Accuracy
-1. Add more training samples (100+)
-2. Use more sophisticated lemmatization (NLTK WordNetLemmatizer)
-3. Experiment with different ML algorithms (RandomForest, GradientBoosting)
-4. Add additional preprocessing (stop word removal, spell checking)
-5. Implement cross-validation for better metrics
+### To Improve Retrieval Quality
+1. Expand FAQ dataset with more Q&A pairs
+2. Add synonyms or alias questions to existing entries
+3. Implement hybrid retrieval (combine semantic + keyword search)
+4. Use more advanced vectorizers (Word2Vec, BERT embeddings)
+5. Add multi-turn context tracking for follow-up questions
+6. Experiment with different similarity metrics (Jaccard, Euclidean)
 
 ---
 
