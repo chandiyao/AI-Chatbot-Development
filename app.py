@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 import streamlit as st
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -105,16 +107,24 @@ if user_query := st.chat_input("Ask an IT question..."):
         else:
             system_response = "❌ **[Version 1 Error]** Intent mapping failed. Exact Match rules state that input characters must mimic a database entry exactly, with no variance."
 
-    # 【Version 2: Pattern & Keyword Matching】
+    # 【Version 2: Pattern & Keyword Matching with Safety Checks】
     elif agent_choice == "Version 2: Pattern Matching Agent":
         if "wifi" in clean_query or "wi-fi" in clean_query or "connection" in clean_query:
-            system_response = df[df['question'].str.contains("wifi")].iloc[0]['answer']
+            matches = df[df['question'].str.lower().str.contains("wifi")]
+            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
+            
         elif "password" in clean_query or "reset" in clean_query or "lock" in clean_query:
-            system_response = df[df['question'].str.contains("password")].iloc[0]['answer']
+            matches = df[df['question'].str.lower().str.contains("password")]
+            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
+            
         elif "laptop" in clean_query or "screen" in clean_query or "hardware" in clean_query or "display" in clean_query:
-            system_response = df[df['question'].str.contains("laptop")].iloc[0]['answer']
+            matches = df[df['question'].str.lower().str.contains("laptop")]
+            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
+            
         elif "outlook" in clean_query or "email" in clean_query or "phone" in clean_query:
-            system_response = df[df['question'].str.contains("outlook")].iloc[0]['answer']
+            matches = df[df['question'].str.lower().str.contains("outlook")]
+            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
+            
         else:
             system_response = "⚠️ **[Version 2 Warning]** Pattern recognition failed. The input did not contain any predefined IT key-terms (e.g., wifi, password, laptop, outlook)."
 
