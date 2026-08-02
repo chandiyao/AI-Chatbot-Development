@@ -9,6 +9,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import LinearSVC
 from sklearn.metrics import classification_report
 
+try:
+    from st_keyup import st_keyup
+except ImportError:
+    st_keyup = None
+
 st.set_page_config(page_title="Multi-Algorithm IT Chatbot", page_icon="🤖", layout="wide")
 
 CUSTOM_CSS = """
@@ -163,6 +168,8 @@ AGENT_META = {
     },
 }
 
+WELCOME_MESSAGE = "Hello. I am your automated IT support agent. Feel free to submit a query regarding wifi setups, password policies, or system issues."
+
 if "active_agent" not in st.session_state:
     st.session_state.active_agent = AGENT_OPTIONS[2]
 
@@ -170,11 +177,11 @@ if "chat_sessions" not in st.session_state:
     st.session_state.chat_sessions = [
         {
             "id": str(uuid4()),
-            "title": "LOQ Laptop Monitor Not Working",
+            "title": "New Chat",
             "messages": [
                 {
                     "role": "assistant",
-                    "content": "Hello. I am your automated IT support agent. Feel free to submit a query regarding wifi setups, password policies, or system issues.",
+                    "content": WELCOME_MESSAGE,
                 }
             ],
         }
@@ -209,7 +216,7 @@ def create_new_chat() -> None:
         "messages": [
             {
                 "role": "assistant",
-                "content": "Hello. I am your automated IT support agent. Feel free to submit a query regarding wifi setups, password policies, or system issues.",
+                "content": WELCOME_MESSAGE,
             }
         ],
     }
@@ -217,12 +224,14 @@ def create_new_chat() -> None:
     st.session_state.active_session_id = new_session["id"]
 
 def clear_chat_history() -> None:
-    get_active_session()["messages"] = [
+    active_session = get_active_session()
+    active_session["messages"] = [
         {
             "role": "assistant",
-            "content": "Hello. I am your automated IT support agent. Feel free to submit a query regarding wifi setups, password policies, or system issues.",
+            "content": WELCOME_MESSAGE,
         }
     ]
+    active_session["title"] = "New Chat"
 
 def set_active_session(session_id: str) -> None:
     st.session_state.active_session_id = session_id
@@ -268,6 +277,26 @@ def get_session_preview(messages: list[dict]) -> str:
 def format_session_title(session: dict) -> str:
     title = session.get("title", "New Chat").strip()
     return title if title else "New Chat"
+
+def migrate_legacy_chat_titles() -> None:
+    for session in st.session_state.chat_sessions:
+        title = str(session.get("title", "")).strip()
+        if not title:
+            session["title"] = "New Chat"
+            continue
+
+        if title == "LOQ Laptop Monitor Not Working":
+            first_user_message = next(
+                (
+                    message["content"].strip()
+                    for message in session.get("messages", [])
+                    if message.get("role") == "user" and message.get("content", "").strip()
+                ),
+                "",
+            )
+            session["title"] = label_chat_topic(first_user_message) if first_user_message else "New Chat"
+
+migrate_legacy_chat_titles()
 
 # ------------------------------------------------------------------
 # BACKEND: DATA LOADING & ML INITIALIZATION
@@ -329,12 +358,23 @@ if st.sidebar.button("Clear Chat History", use_container_width=True):
 st.sidebar.markdown("### Recent")
 
 if st.session_state.session_search_mode:
-    st.session_state.session_search_query = st.sidebar.text_input(
-        "Search sessions",
-        value=st.session_state.session_search_query,
-        placeholder="Search by topic or keyword...",
-        label_visibility="collapsed",
-    )
+    if st_keyup is not None:
+        with st.sidebar:
+            st.session_state.session_search_query = st_keyup(
+                "Search sessions",
+                value=st.session_state.session_search_query,
+                key="session_search_query_input",
+                placeholder="Search by topic or keyword...",
+            ) or ""
+    else:
+        st.session_state.session_search_query = st.sidebar.text_input(
+            "Search sessions",
+            value=st.session_state.session_search_query,
+            key="session_search_query",
+            placeholder="Search by topic or keyword...",
+            label_visibility="collapsed",
+        )
+        st.sidebar.caption("Install st-keyup for instant key-by-key search updates.")
 else:
     st.session_state.session_search_query = ""
 
@@ -344,8 +384,7 @@ if search_text:
     recent_sessions = [
         session
         for session in st.session_state.chat_sessions
-        if search_text in session["title"].lower()
-        or search_text in get_session_preview(session["messages"]).lower()
+        if search_text in format_session_title(session).lower()
     ]
 
 if recent_sessions:
