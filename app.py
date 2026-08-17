@@ -2,12 +2,16 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 import re
 from uuid import uuid4
+import numpy as np
 import streamlit as st
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.svm import LinearSVC
-from sklearn.metrics import classification_report
+from sklearn.metrics.pairwise import cosine_similarity
+
+# Minimum cosine similarity required before Version 3 will return a matched
+# answer. Below this, the agent reports low confidence instead of guessing.
+SIMILARITY_THRESHOLD = 0.15
 
 try:
     from st_keyup import st_keyup
@@ -162,7 +166,7 @@ AGENT_META = {
     "Version 3: Machine Learning Agent": {
         "label": "Machine Learning",
         "description": "Best for flexible wording and broader semantic matching.",
-        "logic": "TF-IDF text vectorization matrix combined with a Linear Support Vector Classifier (`LinearSVC`). Capable of semantic generalization and predictive inference.",
+        "logic": "TF-IDF text vectorization with cosine similarity retrieval across all FAQ questions. Returns the closest-matching answer with a confidence score, or flags low-confidence queries below the similarity threshold.",
         "accent": "#2f7dd1",
         "icon": "🧠",
     },
@@ -311,7 +315,75 @@ def load_data():
     df["question"] = df["question"].astype(str).str.strip()
     df["answer"] = df["answer"].astype(str).str.strip()
     df = df[(df["question"] != "") & (df["answer"] != "")]
+    df = df.reset_index(drop=True)
     return df
+
+
+@st.cache_resource
+def build_retrieval_engine(_df: pd.DataFrame):
+    """
+    Fit a TF-IDF vectorizer over every FAQ question and use cosine similarity
+    for retrieval. NOTE: every answer in this dataset is unique (787 unique
+    answers for 787 rows), so treating this as a multi-class classification
+    problem (one class per answer) is not viable — after any train/test split,
+    the model would never have seen the correct class for a test-set question.
+    Nearest-neighbour retrieval via cosine similarity is the correct approach
+    and is cached once via @st.cache_resource so it only runs on first load.
+    """
+    vectorizer = TfidfVectorizer(stop_words="english", min_df=1)
+    question_matrix = vectorizer.fit_transform(_df["question"])
+    return vectorizer, question_matrix
+
+
+@st.cache_resource
+def evaluate_retrieval(_df: pd.DataFrame, _vectorizer: TfidfVectorizer, threshold: float):
+    """
+    Evaluate retrieval quality on a held-out split. Since every question in
+    the dataset is unique text, "correct" means the held-out question
+    retrieves ITS OWN row (top-1 self-retrieval) when matched against the
+    full question set. This tests whether TF-IDF similarity is discriminative
+    enough to distinguish each question from its 786 neighbours.
+    """
+    train_idx, test_idx = train_test_split(
+        np.arange(len(_df)), test_size=0.2, random_state=42
+    )
+    full_matrix = _vectorizer.transform(_df["question"])
+    test_matrix = _vectorizer.transform(_df.iloc[test_idx]["question"])
+
+    sims = cosine_similarity(test_matrix, full_matrix)
+    top1_idx = sims.argmax(axis=1)
+    top1_score = sims.max(axis=1)
+
+    correct = (top1_idx == test_idx)
+    accuracy_at_1 = float(correct.mean())
+    above_threshold = float((top1_score >= threshold).mean())
+    avg_similarity = float(top1_score.mean())
+    median_similarity = float(np.median(top1_score))
+
+    return {
+        "n_test": len(test_idx),
+        "accuracy_at_1": accuracy_at_1,
+        "above_threshold_rate": above_threshold,
+        "avg_similarity": avg_similarity,
+        "median_similarity": median_similarity,
+        "threshold": threshold,
+    }
+
+
+def retrieve_best_match(query: str, vectorizer: TfidfVectorizer, question_matrix, threshold: float):
+    """Return (answer, matched_question, topic, score) or (None, None, None, score) if below threshold."""
+    query_vec = vectorizer.transform([query])
+    sims = cosine_similarity(query_vec, question_matrix)[0]
+    best_idx = int(sims.argmax())
+    best_score = float(sims[best_idx])
+
+    if best_score < threshold:
+        return None, None, None, best_score
+
+    row = df.iloc[best_idx]
+    topic = row["topic"] if "topic" in df.columns else None
+    return row["answer"], row["question"], topic, best_score
+
 
 df = load_data()
 
@@ -319,25 +391,28 @@ if df is None:
     st.error("⚠️ 'it_support_dataset.csv' not found! Please verify it is saved in your project root directory.")
     st.stop()
 
-# Split and train historical reference data for Version 3 (Machine Learning)
-X = df['question']
-y = df['answer']
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-vectorizer = TfidfVectorizer(stop_words='english', min_df=1)
-X_train_tfidf = vectorizer.fit_transform(X_train)
-X_test_tfidf = vectorizer.transform(X_test)
-
-ml_model = LinearSVC()
-ml_model.fit(X_train_tfidf, y_train)
-
-# Calculate Evaluation Report for Version 3
-predictions = ml_model.predict(X_test_tfidf)
-report_dict = classification_report(y_test, predictions, output_dict=True, zero_division=0)
+vectorizer, question_matrix = build_retrieval_engine(df)
+eval_report = evaluate_retrieval(df, vectorizer, SIMILARITY_THRESHOLD)
 
 # ------------------------------------------------------------------
 # SIDEBAR: CHAT SESSION LIST
 # ------------------------------------------------------------------
+with st.sidebar.expander("📊 Model Evaluation Report", expanded=False):
+    st.caption(
+        "Held-out test split — does TF-IDF similarity retrieve each "
+        "question's own answer over its 786 neighbours?"
+    )
+    m1, m2 = st.columns(2)
+    m1.metric("Top-1 Accuracy", f"{eval_report['accuracy_at_1']*100:.1f}%")
+    m2.metric("Avg. Confidence", f"{eval_report['avg_similarity']:.2f}")
+    m3, m4 = st.columns(2)
+    m3.metric("Median Confidence", f"{eval_report['median_similarity']:.2f}")
+    m4.metric("Above Threshold", f"{eval_report['above_threshold_rate']*100:.1f}%")
+    st.caption(
+        f"Evaluated on {eval_report['n_test']} held-out questions · "
+        f"confidence threshold = {eval_report['threshold']}"
+    )
+
 st.sidebar.header("Chat Sessions")
 st.sidebar.caption("New Chat, Search Chat, and recent conversations.")
 
@@ -489,14 +564,35 @@ if user_query := st.chat_input("Ask an IT question..."):
         elif "outlook" in clean_query or "email" in clean_query or "phone" in clean_query:
             matches = df[df['question'].str.lower().str.contains("outlook")]
             system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
-            
+
+        elif "printer" in clean_query or "print" in clean_query:
+            matches = df[df['question'].str.lower().str.contains("printer")]
+            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
+
+        elif "vpn" in clean_query:
+            matches = df[df['question'].str.lower().str.contains("vpn")]
+            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
+
         else:
             system_response = "⚠️ **[Version 2 Warning]** Pattern recognition failed. The input did not contain any predefined IT key-terms (e.g., wifi, password, laptop, outlook)."
 
-    # 【Version 3: Natural Language Machine Learning】
+    # 【Version 3: TF-IDF + Cosine Similarity Retrieval】
     elif st.session_state.active_agent == "Version 3: Machine Learning Agent":
-        query_tfidf = vectorizer.transform([user_query])
-        system_response = ml_model.predict(query_tfidf)[0]
+        answer, matched_question, topic, score = retrieve_best_match(
+            user_query, vectorizer, question_matrix, SIMILARITY_THRESHOLD
+        )
+        if answer is not None:
+            topic_line = f"\n\n*Topic: {topic}*" if topic else ""
+            system_response = (
+                f"{answer}\n\n"
+                f"— matched: \"{matched_question}\" · confidence: {score:.2f}{topic_line}"
+            )
+        else:
+            system_response = (
+                f"🤔 **[Version 3]** No confident match found "
+                f"(best similarity: {score:.2f}, threshold: {SIMILARITY_THRESHOLD}). "
+                "Try rephrasing with more specific keywords or system names."
+            )
 
     # Post processing output response stream
     active_session["messages"].append({"role": "assistant", "content": system_response})
