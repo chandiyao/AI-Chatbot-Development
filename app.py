@@ -173,12 +173,24 @@ CUSTOM_CSS = """
         padding-right: 0;
     }
 
-    div[data-testid="stChatMessageAvatarUser"] {
-        background: var(--bubble) !important;
+    div[data-testid="stChatMessage"] > div:first-child {
+        display: none !important;
     }
 
-    div[data-testid="stChatMessageAvatarAssistant"] {
-        background: var(--accent) !important;
+    div[data-testid="stChatMessage"]:has([aria-label="Chat message from user"]) {
+        flex-direction: row;
+        justify-content: flex-end;
+    }
+
+    div[data-testid="stChatMessage"]:has([aria-label="Chat message from user"]) > div:last-child {
+        flex: 1 1 auto;
+        width: 100% !important;
+        max-width: 100%;
+        margin-left: auto !important;
+    }
+
+    div[data-testid="stChatMessage"]:has([aria-label="Chat message from user"]) [data-testid="stMarkdownContainer"] {
+        text-align: right !important;
     }
 
     .assistant-bubble {
@@ -189,7 +201,11 @@ CUSTOM_CSS = """
         background: var(--bubble);
         border-radius: 16px;
         padding: 0.65rem 1rem;
-        display: inline-block;
+        display: block;
+        width: fit-content;
+        margin-left: auto !important;
+        margin-right: 0 !important;
+        text-align: left;
     }
 
     .chat-caption {
