@@ -1,6 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 import re
+import html
 from uuid import uuid4
 import numpy as np
 import streamlit as st
@@ -22,120 +23,288 @@ st.set_page_config(page_title="Multi-Algorithm IT Chatbot", page_icon="🤖", la
 
 CUSTOM_CSS = """
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&family=Inter:wght@400;500;600;700&display=swap');
+
+    :root {
+        --bg: #F5F4EE;
+        --panel: #FAF9F5;
+        --panel-raised: #FFFFFF;
+        --border: rgba(30, 27, 22, 0.09);
+        --border-strong: rgba(30, 27, 22, 0.16);
+        --text: #2D2A26;
+        --text-muted: #75716A;
+        --accent: #D97757;
+        --accent-hover: #C4653F;
+        --accent-soft: rgba(217, 119, 87, 0.12);
+        --bubble: #ECEAE3;
+    }
+
     .stApp {
-        background:
-            radial-gradient(circle at top left, rgba(78, 205, 196, 0.14), transparent 28%),
-            radial-gradient(circle at top right, rgba(58, 123, 213, 0.10), transparent 24%),
-            linear-gradient(180deg, #f7fbfc 0%, #eef4f7 100%);
-        color: #12303a;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Inter', sans-serif;
     }
 
     .block-container {
-        padding-top: 1.5rem;
+        padding-top: 2rem;
         padding-bottom: 2rem;
-        max-width: 1240px;
+        max-width: 900px;
     }
 
-    .hero-card, .surface-card {
-        background: rgba(255, 255, 255, 0.78);
-        border: 1px solid rgba(17, 48, 58, 0.08);
-        border-radius: 22px;
-        box-shadow: 0 16px 40px rgba(16, 32, 41, 0.08);
-        backdrop-filter: blur(12px);
+    h1, h2, h3, .stMarkdown h3 { color: var(--text); font-family: 'Inter', sans-serif; }
+
+    /* ---------- Greeting ---------- */
+    .greeting-wrap {
+        padding: 1rem 0 1.75rem 0;
+        text-align: center;
     }
 
-    .hero-card {
-        padding: 1.4rem 1.5rem;
-        margin-bottom: 1rem;
+    .greeting-wrap.is-fresh {
+        min-height: 46vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding-bottom: 2.25rem;
     }
 
-    .eyebrow {
-        font-size: 0.8rem;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: #2d6a73;
-        font-weight: 700;
+    .greeting-wrap .greeting-subtitle {
+        margin-left: auto;
+        margin-right: auto;
     }
 
-    .hero-title {
+    .greeting-wrap .status-row {
+        justify-content: center;
+    }
+
+    .greeting-title {
+        font-family: 'Source Serif 4', Georgia, serif;
+        font-weight: 500;
         font-size: 2.15rem;
-        line-height: 1.1;
-        margin: 0.25rem 0 0.5rem 0;
-        color: #0f2730;
-        font-weight: 800;
+        line-height: 1.25;
+        color: var(--text);
+        margin: 0 0 0.4rem 0;
     }
 
-    .hero-subtitle {
-        color: #45606a;
+    .greeting-title .accent-dot {
+        color: var(--accent);
+    }
+
+    .greeting-subtitle {
+        color: var(--text-muted);
         font-size: 1rem;
-        margin: 0;
+        margin: 0 0 1.1rem 0;
+        max-width: 600px;
     }
 
-    .metric-chip {
+    .status-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+    .status-chip {
         display: inline-flex;
         align-items: center;
-        gap: 0.45rem;
-        padding: 0.55rem 0.8rem;
+        gap: 0.4rem;
+        padding: 0.3rem 0.7rem;
         border-radius: 999px;
-        background: rgba(18, 48, 58, 0.05);
-        color: #163943;
-        font-weight: 600;
-        margin-right: 0.45rem;
-        margin-top: 0.35rem;
+        background: var(--panel-raised);
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        font-weight: 500;
     }
 
-    .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.8rem;
-        margin: 0.5rem 0 1rem 0;
+    .status-chip b { color: var(--text); font-weight: 600; }
+    .status-chip .swatch { width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: var(--accent); }
+
+    /* ---------- Agent switcher: segmented pill control ---------- */
+    .agent-segment {
+        display: inline-flex;
+        background: var(--panel-raised);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.25rem;
+        gap: 0.25rem;
+        margin-bottom: 0.35rem;
     }
 
-    .agent-card {
-        border: 1px solid rgba(17, 48, 58, 0.10);
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.9);
-        padding: 0.95rem;
-        text-align: left;
-        width: 100%;
+    div[data-testid="column"] div[data-testid="stButton"] > button {
+        border-radius: 999px !important;
     }
 
-    .agent-card strong {
-        display: block;
-        margin-bottom: 0.25rem;
-        color: #102b33;
+    .agent-desc-text {
+        color: var(--text-muted);
+        font-size: 0.86rem;
+        margin: 0.5rem 0 1.25rem 0;
+        text-align: center;
     }
 
-    .agent-card small {
-        color: #54717a;
-        line-height: 1.35;
-    }
-
+    /* ---------- Buttons ---------- */
     div[data-testid="stButton"] > button {
-        border-radius: 14px;
-        border: 1px solid rgba(17, 48, 58, 0.10);
-        padding: 0.65rem 1rem;
+        border-radius: 10px;
+        border: 1px solid var(--border-strong);
+        background: var(--panel-raised);
+        color: var(--text);
+        padding: 0.55rem 1rem;
         font-weight: 600;
+        font-family: 'Inter', sans-serif;
+        box-shadow: none;
+    }
+
+    div[data-testid="stButton"] > button:hover {
+        border-color: var(--accent);
+        color: var(--accent-hover);
     }
 
     div[data-testid="stButton"] > button[kind="primary"] {
-        background: linear-gradient(135deg, #12303a 0%, #1e5f72 100%);
-        color: white;
+        background: var(--accent);
+        color: #FFFFFF;
         border: none;
     }
 
-    div[data-testid="stChatMessage"] {
-        border-radius: 18px;
+    div[data-testid="stButton"] > button[kind="primary"]:hover {
+        background: var(--accent-hover);
+        color: #FFFFFF;
     }
 
+    /* ---------- Chat ---------- */
+    div[data-testid="stChatMessage"] {
+        background: transparent;
+        border: none;
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    div[data-testid="stChatMessageAvatarUser"] {
+        background: var(--bubble) !important;
+    }
+
+    div[data-testid="stChatMessageAvatarAssistant"] {
+        background: var(--accent) !important;
+    }
+
+    .assistant-bubble {
+        background: transparent;
+    }
+
+    .user-bubble {
+        background: var(--bubble);
+        border-radius: 16px;
+        padding: 0.65rem 1rem;
+        display: inline-block;
+    }
+
+    .chat-caption {
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        margin-top: 0.65rem;
+        padding-top: 0.55rem;
+        border-top: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        flex-wrap: wrap;
+    }
+
+    .chat-caption .topic-tag {
+        background: var(--accent-soft);
+        color: var(--accent-hover);
+        padding: 0.1rem 0.5rem;
+        border-radius: 999px;
+        font-weight: 500;
+    }
+
+    /* confidence meter: slim rounded progress bar */
+    .confidence-track {
+        display: inline-block;
+        width: 56px;
+        height: 5px;
+        border-radius: 999px;
+        background: var(--border-strong);
+        overflow: hidden;
+        vertical-align: middle;
+    }
+    .confidence-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: var(--meter-color, var(--accent));
+    }
+
+    /* ---------- Sidebar ---------- */
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(240, 246, 248, 0.95));
-        border-right: 1px solid rgba(17, 48, 58, 0.08);
-        color: #12303a;
+        background: var(--panel);
+        border-right: 1px solid var(--border);
+        color: var(--text);
     }
 
     section[data-testid="stSidebar"] * {
-        color: #12303a;
+        color: var(--text);
+    }
+
+    section[data-testid="stSidebar"] .stCaption, section[data-testid="stSidebar"] small {
+        color: var(--text-muted) !important;
+    }
+
+    section[data-testid="stSidebar"] h3, section[data-testid="stSidebar"] h4 {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+    }
+
+    div[data-testid="stMetric"] {
+        background: var(--panel-raised);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.5rem 0.7rem;
+    }
+
+    div[data-testid="stMetricValue"] {
+        font-family: 'Inter', sans-serif;
+        color: var(--accent);
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+
+    div[data-testid="stMetricLabel"] {
+        color: var(--text-muted) !important;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    section[data-testid="stSidebar"] div[data-testid="stExpander"] {
+        background: var(--panel-raised);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+    }
+
+    /* session list rows */
+    section[data-testid="stSidebar"] div[data-testid="stButton"] > button {
+        text-align: left;
+        justify-content: flex-start;
+        font-family: 'Inter', sans-serif;
+        font-weight: 500;
+        font-size: 0.86rem;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 8px;
+    }
+
+    section[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover {
+        background: var(--panel-raised);
+        border-color: var(--border);
+        color: var(--accent-hover);
+    }
+
+    input, textarea {
+        font-family: 'Inter', sans-serif !important;
+    }
+
+    /* focus visibility */
+    button:focus-visible, input:focus-visible {
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px;
     }
 </style>
 """
@@ -153,24 +322,75 @@ AGENT_META = {
         "label": "Exact Match",
         "description": "Best for exact FAQ wording. Fast, strict, and deterministic.",
         "logic": "String comparison verification (`==`). The user query must match a database question exactly (case-insensitive, trimmed) to fetch a result.",
-        "accent": "#2d6a73",
+        "accent": "#D97757",
         "icon": "🎯",
     },
     "Version 2: Pattern Matching Agent": {
         "label": "Pattern Match",
         "description": "Best for keyword-heavy questions and quick topic routing.",
         "logic": "Fuzzy token inclusion mapping (`in` operator). The pipeline sweeps user inputs for high-frequency technical key-terms to trigger responses.",
-        "accent": "#d98c2b",
+        "accent": "#D97757",
         "icon": "🧭",
     },
     "Version 3: Machine Learning Agent": {
         "label": "Machine Learning",
         "description": "Best for flexible wording and broader semantic matching.",
         "logic": "TF-IDF text vectorization with cosine similarity retrieval across all FAQ questions. Returns the closest-matching answer with a confidence score, or flags low-confidence queries below the similarity threshold.",
-        "accent": "#2f7dd1",
+        "accent": "#D97757",
         "icon": "🧠",
     },
 }
+
+
+def render_confidence_meter(score: float, threshold: float) -> str:
+    """Slim rounded progress bar showing match confidence (0-1)."""
+    pct = max(0, min(100, round(score * 100)))
+    if score < threshold:
+        color = "#B5471E"
+    elif score < 0.5:
+        color = "#D97757"
+    else:
+        color = "#2E7D5B"
+    return (
+        f'<span class="confidence-track">'
+        f'<span class="confidence-fill" style="width:{pct}%; --meter-color:{color}"></span>'
+        f'</span>'
+    )
+
+
+def render_chat_message(message: dict) -> None:
+    """Render one chat turn. User turns show as a soft rounded bubble;
+    assistant turns are plain text (Claude-style, no bubble) with a small
+    meta line for matched question / topic / confidence when available."""
+    role = message["role"]
+    with st.chat_message(role, avatar=("🧑" if role == "user" else "✳️")):
+        if role == "user":
+            st.markdown(
+                f"<div class='user-bubble'>{html.escape(message['content'])}</div>",
+                unsafe_allow_html=True,
+            )
+            return
+
+        st.markdown(message["content"])
+
+        meta = message.get("meta") or {}
+        caption_parts = []
+        if meta.get("matched_question"):
+            caption_parts.append(
+                f"matched \u201c{html.escape(str(meta['matched_question']))}\u201d"
+            )
+        if meta.get("topic"):
+            caption_parts.append(f"<span class='topic-tag'>{html.escape(str(meta['topic']))}</span>")
+        if meta.get("score") is not None:
+            score = meta["score"]
+            threshold = meta.get("threshold", SIMILARITY_THRESHOLD)
+            caption_parts.append(f"{render_confidence_meter(score, threshold)} {score:.2f}")
+
+        if caption_parts:
+            st.markdown(
+                f"<div class='chat-caption'>{' &middot; '.join(caption_parts)}</div>",
+                unsafe_allow_html=True,
+            )
 
 WELCOME_MESSAGE = "Hello. I am your automated IT support agent. Feel free to submit a query regarding wifi setups, password policies, or system issues."
 
@@ -307,14 +527,47 @@ migrate_legacy_chat_titles()
 # ------------------------------------------------------------------
 @st.cache_resource
 def load_data():
+    """
+    Load and adapt the raw support-ticket export (it_dataset.csv) into the
+    topic/question/answer shape the retrieval engine expects.
+
+    The source file is a multilingual customer-support ticket dump with
+    columns: subject, body, answer, type, queue, priority, language,
+    business_type, tag_1..tag_9 — not a pre-built FAQ table. To turn it into
+    an FAQ-style knowledge base we:
+      1. Keep only English-language tickets (language == "en"), since the
+         chat UI and similarity matching are English-only.
+      2. Use `subject` as the FAQ "question". About 12% of English rows have
+         a blank subject, so for those we fall back to the first ~80
+         characters of `body` as a stand-in question.
+      3. Use `answer` as-is for the FAQ "answer".
+      4. Use `queue` as the FAQ "topic" (e.g. "Technical Support",
+         "Billing and Payments") since it's the closest categorical field to
+         a topic label.
+      5. Drop duplicate question/answer pairs and any rows still missing a
+         usable question or answer after the fallback.
+    """
     try:
-        df = pd.read_csv("it_support_dataset.csv", engine="python", on_bad_lines="skip")
+        df = pd.read_csv("it_dataset.csv", engine="python", on_bad_lines="skip")
     except FileNotFoundError:
         return None
-    df = df.dropna(subset=["question", "answer"])
-    df["question"] = df["question"].astype(str).str.strip()
+
+    df = df[df["language"] == "en"].copy()
+
+    def fallback_question(row) -> str:
+        subject = str(row.get("subject", "")).strip()
+        if subject and subject.lower() != "nan":
+            return subject
+        body = str(row.get("body", "")).strip()
+        body = re.sub(r"\s+", " ", body)
+        return body[:80].strip()
+
+    df["question"] = df.apply(fallback_question, axis=1)
     df["answer"] = df["answer"].astype(str).str.strip()
-    df = df[(df["question"] != "") & (df["answer"] != "")]
+    df["topic"] = df["queue"].astype(str).str.strip()
+
+    df = df[(df["question"] != "") & (df["answer"] != "") & (df["answer"].str.lower() != "nan")]
+    df = df.drop_duplicates(subset=["question", "answer"])
     df = df.reset_index(drop=True)
     return df
 
@@ -397,10 +650,10 @@ eval_report = evaluate_retrieval(df, vectorizer, SIMILARITY_THRESHOLD)
 # ------------------------------------------------------------------
 # SIDEBAR: CHAT SESSION LIST
 # ------------------------------------------------------------------
-with st.sidebar.expander("📊 Model Evaluation Report", expanded=False):
+with st.sidebar.expander("Retrieval quality report", expanded=False):
     st.caption(
-        "Held-out test split — does TF-IDF similarity retrieve each "
-        "question's own answer over its 786 neighbours?"
+        "Held-out split — does TF-IDF similarity retrieve each question's "
+        f"own answer over its {len(df) - 1:,} neighbours?"
     )
     m1, m2 = st.columns(2)
     m1.metric("Top-1 Accuracy", f"{eval_report['accuracy_at_1']*100:.1f}%")
@@ -409,12 +662,12 @@ with st.sidebar.expander("📊 Model Evaluation Report", expanded=False):
     m3.metric("Median Confidence", f"{eval_report['median_similarity']:.2f}")
     m4.metric("Above Threshold", f"{eval_report['above_threshold_rate']*100:.1f}%")
     st.caption(
-        f"Evaluated on {eval_report['n_test']} held-out questions · "
-        f"confidence threshold = {eval_report['threshold']}"
+        f"n = {eval_report['n_test']} held-out questions · "
+        f"threshold = {eval_report['threshold']}"
     )
 
-st.sidebar.header("Chat Sessions")
-st.sidebar.caption("New Chat, Search Chat, and recent conversations.")
+st.sidebar.markdown("### Chat sessions")
+st.sidebar.caption("New chat, search chat, and recent conversations.")
 
 top_actions = st.sidebar.columns(2)
 with top_actions[0]:
@@ -431,6 +684,7 @@ if st.sidebar.button("Clear Chat History", use_container_width=True):
     st.rerun()
 
 st.sidebar.markdown("### Recent")
+st.sidebar.markdown("<div style='border-top:1px solid var(--border); margin: -0.4rem 0 0.6rem 0;'></div>", unsafe_allow_html=True)
 
 if st.session_state.session_search_mode:
     if st_keyup is not None:
@@ -467,7 +721,7 @@ if recent_sessions:
         is_active = session["id"] == st.session_state.active_session_id
         preview = get_session_preview(session["messages"])
         session_title = format_session_title(session)
-        button_label = f"{'▶ ' if is_active else ''}{session_title}"
+        button_label = f"{'● ' if is_active else '○ '}{session_title}"
         if st.sidebar.button(button_label, key=f"session_{session['id']}", use_container_width=True):
             set_active_session(session["id"])
             st.rerun()
@@ -479,29 +733,30 @@ else:
 # FRONTEND UI: CHAT COMPONENT
 # ------------------------------------------------------------------
 active_meta = AGENT_META[st.session_state.active_agent]
+is_fresh_chat = len(get_active_messages()) <= 1
+greeting_class = "greeting-wrap is-fresh" if is_fresh_chat else "greeting-wrap"
 
 st.markdown(
     f"""
-    <div class="hero-card">
-        <div class="eyebrow">IT Support Chatbot</div>
-        <div class="hero-title">Clean, focused support across three agent styles</div>
-        <p class="hero-subtitle">Use the switcher to move between exact match, keyword routing, and machine learning without losing the conversation.</p>
-        <div>
-            <span class="metric-chip">{active_meta['icon']} Active: {active_meta['label']}</span>
-            <span class="metric-chip">📚 {len(df):,} entries</span>
-            <span class="metric-chip">💬 Persistent chat history</span>
+    <div class="{greeting_class}">
+        <div class="greeting-title">How can I help with IT today<span class="accent-dot">?</span></div>
+        <p class="greeting-subtitle">Ask a question and compare how exact match, keyword routing, and semantic search each respond — using the same {len(df):,}-entry knowledge base.</p>
+        <div class="status-row">
+            <span class="status-chip"><span class="swatch"></span>Using&nbsp;<b>{active_meta['label']}</b></span>
+            <span class="status-chip">{len(df):,}&nbsp;entries indexed</span>
+            <span class="status-chip">Sessions saved</span>
         </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown("### Choose an agent")
 agent_cols = st.columns(3, gap="medium")
 for column, agent_name in zip(agent_cols, AGENT_OPTIONS):
     meta = AGENT_META[agent_name]
     with column:
-        card_style = "primary" if st.session_state.active_agent == agent_name else "secondary"
+        is_active = st.session_state.active_agent == agent_name
+        card_style = "primary" if is_active else "secondary"
         if st.button(
             f"{meta['icon']} {meta['label']}",
             key=f"agent_btn_{agent_name}",
@@ -510,91 +765,92 @@ for column, agent_name in zip(agent_cols, AGENT_OPTIONS):
         ):
             set_agent(agent_name)
             st.rerun()
-        st.markdown(
-            f"<div class='surface-card' style='padding: 0.9rem 1rem; margin-top: -0.25rem;'><strong>{agent_name}</strong><small>{meta['description']}</small></div>",
-            unsafe_allow_html=True,
-        )
 
-st.caption(f"Active processing pipeline: {st.session_state.active_agent}")
+st.markdown(
+    f"<p class='agent-desc-text'>{active_meta['description']}</p>",
+    unsafe_allow_html=True,
+)
 
 chat_container = st.container()
 with chat_container:
     active_messages = get_active_messages()
     for message in active_messages:
-        with st.chat_message(message["role"]):
-            st.write(message["content"])
+        render_chat_message(message)
 
 # Capture user interactions
 if user_query := st.chat_input("Ask an IT question..."):
     active_session = get_active_session()
-    active_session["messages"].append({"role": "user", "content": user_query})
+    user_message = {"role": "user", "content": user_query}
+    active_session["messages"].append(user_message)
     update_active_session_title(user_query)
-    with st.chat_message("user"):
-        st.write(user_query)
-        
+    render_chat_message(user_message)
+
     clean_query = user_query.lower().strip()
-    system_response = ""
-    
+    active_agent = st.session_state.active_agent
+    answer_text = ""
+    meta: dict = {}
+
     # ------------------------------------------------------------------
     # CORE ROUTING ROUTINES BY ALGORITHM
     # ------------------------------------------------------------------
-    
+
     # 【Version 1: Exact String Matching】
-    if st.session_state.active_agent == "Version 1: Exact Match Agent":
+    if active_agent == "Version 1: Exact Match Agent":
         matched_rows = df[df['question'].str.lower().str.strip() == clean_query]
         if not matched_rows.empty:
-            system_response = matched_rows.iloc[0]['answer']
+            row = matched_rows.iloc[0]
+            answer_text = row['answer']
+            meta = {"matched_question": row['question'], "topic": row.get('topic')}
         else:
-            system_response = "❌ **[Version 1 Error]** Intent mapping failed. Exact Match rules state that input characters must mimic a database entry exactly, with no variance."
+            answer_text = "**No exact match.** Exact Match requires the input to mimic a knowledge-base question exactly (case-insensitive, trimmed) — try Pattern Match or Machine Learning instead."
 
     # 【Version 2: Pattern & Keyword Matching with Safety Checks】
-    elif st.session_state.active_agent == "Version 2: Pattern Matching Agent":
-        if "wifi" in clean_query or "wi-fi" in clean_query or "connection" in clean_query:
-            matches = df[df['question'].str.lower().str.contains("wifi")]
-            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
-            
-        elif "password" in clean_query or "reset" in clean_query or "lock" in clean_query:
-            matches = df[df['question'].str.lower().str.contains("password")]
-            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
-            
-        elif "laptop" in clean_query or "screen" in clean_query or "hardware" in clean_query or "display" in clean_query:
-            matches = df[df['question'].str.lower().str.contains("laptop")]
-            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
-            
-        elif "outlook" in clean_query or "email" in clean_query or "phone" in clean_query:
-            matches = df[df['question'].str.lower().str.contains("outlook")]
-            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
-
-        elif "printer" in clean_query or "print" in clean_query:
-            matches = df[df['question'].str.lower().str.contains("printer")]
-            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
-
-        elif "vpn" in clean_query:
-            matches = df[df['question'].str.lower().str.contains("vpn")]
-            system_response = matches.iloc[0]['answer'] if not matches.empty else "⚠️ Keyword flagged, but no corresponding knowledge entries matched inside the dataset."
-
+    elif active_agent == "Version 2: Pattern Matching Agent":
+        keyword_routes = [
+            (("wifi", "wi-fi", "connection"), "wifi"),
+            (("password", "reset", "lock"), "password"),
+            (("laptop", "screen", "hardware", "display"), "laptop"),
+            (("outlook", "email", "phone"), "outlook"),
+            (("printer", "print"), "printer"),
+            (("vpn",), "vpn"),
+        ]
+        matched_route = next(
+            (route_term for triggers, route_term in keyword_routes if any(t in clean_query for t in triggers)),
+            None,
+        )
+        if matched_route:
+            matches = df[df['question'].str.lower().str.contains(matched_route)]
+            if not matches.empty:
+                row = matches.iloc[0]
+                answer_text = row['answer']
+                meta = {"matched_question": row['question'], "topic": row.get('topic')}
+            else:
+                answer_text = f"Keyword **{matched_route}** was flagged, but no matching knowledge-base entries were found."
         else:
-            system_response = "⚠️ **[Version 2 Warning]** Pattern recognition failed. The input did not contain any predefined IT key-terms (e.g., wifi, password, laptop, outlook)."
+            answer_text = "**No key-term detected.** Pattern Match only fires on predefined terms (wifi, password, laptop, outlook, printer, vpn) — try Machine Learning for flexible wording."
 
     # 【Version 3: TF-IDF + Cosine Similarity Retrieval】
-    elif st.session_state.active_agent == "Version 3: Machine Learning Agent":
+    elif active_agent == "Version 3: Machine Learning Agent":
         answer, matched_question, topic, score = retrieve_best_match(
             user_query, vectorizer, question_matrix, SIMILARITY_THRESHOLD
         )
         if answer is not None:
-            topic_line = f"\n\n*Topic: {topic}*" if topic else ""
-            system_response = (
-                f"{answer}\n\n"
-                f"— matched: \"{matched_question}\" · confidence: {score:.2f}{topic_line}"
-            )
+            answer_text = answer
+            meta = {
+                "matched_question": matched_question,
+                "topic": topic,
+                "score": score,
+                "threshold": SIMILARITY_THRESHOLD,
+            }
         else:
-            system_response = (
-                f"🤔 **[Version 3]** No confident match found "
-                f"(best similarity: {score:.2f}, threshold: {SIMILARITY_THRESHOLD}). "
-                "Try rephrasing with more specific keywords or system names."
-            )
+            answer_text = "**No confident match.** Try rephrasing with more specific keywords or system names."
+            meta = {"score": score, "threshold": SIMILARITY_THRESHOLD}
 
-    # Post processing output response stream
-    active_session["messages"].append({"role": "assistant", "content": system_response})
-    with st.chat_message("assistant"):
-        st.write(system_response)
+    assistant_message = {
+        "role": "assistant",
+        "content": answer_text,
+        "agent": active_agent,
+        "meta": meta,
+    }
+    active_session["messages"].append(assistant_message)
+    render_chat_message(assistant_message)
