@@ -943,7 +943,7 @@ algorithm_dashboard = evaluate_algorithm_dashboard(df, vectorizer, question_matr
 # ------------------------------------------------------------------
 # SIDEBAR: CHAT SESSION LIST
 # ------------------------------------------------------------------
-with st.sidebar.expander("Retrieval quality report", expanded=False):
+def render_retrieval_quality_report() -> None:
     st.caption(
         "Interactive benchmark across Exact Match, Pattern Match, and Machine Learning."
     )
@@ -1029,6 +1029,25 @@ with st.sidebar.expander("Retrieval quality report", expanded=False):
         f"Dashboard queries: {algorithm_dashboard['n_queries']:,} · "
         f"ML held-out n = {eval_report['n_test']} · threshold = {eval_report['threshold']}"
     )
+
+
+if "show_quality_report" not in st.session_state:
+    st.session_state.show_quality_report = False
+
+if hasattr(st, "dialog"):
+    @st.dialog("Retrieval Quality Report")
+    def open_retrieval_quality_report_dialog() -> None:
+        render_retrieval_quality_report()
+
+    if st.sidebar.button("Open Retrieval Quality Report", use_container_width=True):
+        st.session_state.show_quality_report = True
+
+    if st.session_state.show_quality_report:
+        st.session_state.show_quality_report = False
+        open_retrieval_quality_report_dialog()
+else:
+    with st.sidebar.expander("Retrieval quality report", expanded=False):
+        render_retrieval_quality_report()
 
 st.sidebar.markdown("### Chat sessions")
 st.sidebar.caption("New chat, search chat, and recent conversations.")
