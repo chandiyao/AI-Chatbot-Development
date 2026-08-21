@@ -2,6 +2,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 import re
 import html
+from time import perf_counter
 from datetime import datetime, timezone
 from uuid import uuid4
 import numpy as np
@@ -346,6 +347,15 @@ AGENT_OPTIONS = [
     "Version 3: Machine Learning Agent",
 ]
 
+KEYWORD_ROUTES = [
+    (("wifi", "wi-fi", "connection"), "wifi"),
+    (("password", "reset", "lock"), "password"),
+    (("laptop", "screen", "hardware", "display"), "laptop"),
+    (("outlook", "email", "phone"), "outlook"),
+    (("printer", "print"), "printer"),
+    (("vpn",), "vpn"),
+]
+
 AGENT_META = {
     "Version 1: Exact Match Agent": {
         "label": "Exact Match",
@@ -400,9 +410,41 @@ def render_chat_message(message: dict) -> None:
             )
             return
 
-        st.markdown(message["content"])
-
         meta = message.get("meta") or {}
+
+        comparison_results = meta.get("comparison_results")
+        if comparison_results:
+            st.markdown(message["content"])
+            result_cols = st.columns(3)
+            for column, result in zip(result_cols, comparison_results):
+                with column:
+                    st.markdown(f"**{result['label']}**")
+                    st.caption(f"Latency: {result['latency_ms']:.2f} ms")
+                    st.markdown(result["answer"])
+
+                    result_meta = result.get("meta") or {}
+                    local_caption_parts = []
+                    if result_meta.get("matched_question"):
+                        local_caption_parts.append(
+                            f"matched \u201c{html.escape(str(result_meta['matched_question']))}\u201d"
+                        )
+                    if result_meta.get("topic"):
+                        local_caption_parts.append(
+                            f"<span class='topic-tag'>{html.escape(str(result_meta['topic']))}</span>"
+                        )
+                    if result_meta.get("score") is not None:
+                        score = result_meta["score"]
+                        threshold = result_meta.get("threshold", SIMILARITY_THRESHOLD)
+                        local_caption_parts.append(f"{render_confidence_meter(score, threshold)} {score:.2f}")
+
+                    if local_caption_parts:
+                        st.markdown(
+                            f"<div class='chat-caption'>{' &middot; '.join(local_caption_parts)}</div>",
+                            unsafe_allow_html=True,
+                        )
+            return
+
+        st.markdown(message["content"])
         caption_parts = []
         if meta.get("matched_question"):
             caption_parts.append(
@@ -710,6 +752,51 @@ def retrieve_best_match(query: str, vectorizer: TfidfVectorizer, question_matrix
     return row["answer"], row["question"], topic, best_score
 
 
+def run_exact_match(clean_query: str) -> tuple[str, dict]:
+    matched_rows = df[df["question"].str.lower().str.strip() == clean_query]
+    if not matched_rows.empty:
+        row = matched_rows.iloc[0]
+        return row["answer"], {"matched_question": row["question"], "topic": row.get("topic")}
+    return (
+        "**No exact match.** Exact Match requires the input to mimic a knowledge-base question exactly (case-insensitive, trimmed) — try Pattern Match or Machine Learning instead.",
+        {},
+    )
+
+
+def run_pattern_match(clean_query: str) -> tuple[str, dict]:
+    matched_route = next(
+        (route_term for triggers, route_term in KEYWORD_ROUTES if any(t in clean_query for t in triggers)),
+        None,
+    )
+    if matched_route:
+        matches = df[df["question"].str.lower().str.contains(matched_route)]
+        if not matches.empty:
+            row = matches.iloc[0]
+            return row["answer"], {"matched_question": row["question"], "topic": row.get("topic")}
+        return f"Keyword **{matched_route}** was flagged, but no matching knowledge-base entries were found.", {}
+    return (
+        "**No key-term detected.** Pattern Match only fires on predefined terms (wifi, password, laptop, outlook, printer, vpn) — try Machine Learning for flexible wording.",
+        {},
+    )
+
+
+def run_machine_learning(query: str) -> tuple[str, dict]:
+    answer, matched_question, topic, score = retrieve_best_match(
+        query, vectorizer, question_matrix, SIMILARITY_THRESHOLD
+    )
+    if answer is not None:
+        return answer, {
+            "matched_question": matched_question,
+            "topic": topic,
+            "score": score,
+            "threshold": SIMILARITY_THRESHOLD,
+        }
+    return (
+        "**No confident match.** Try rephrasing with more specific keywords or system names.",
+        {"score": score, "threshold": SIMILARITY_THRESHOLD},
+    )
+
+
 df = load_data()
 
 if df is None:
@@ -874,6 +961,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+comparison_mode = st.sidebar.toggle(
+    "Algorithm Comparison Mode",
+    value=False,
+    help="Run the same query through Exact Match, Pattern Match, and Machine Learning side-by-side.",
+)
+
 chat_container = st.container()
 with chat_container:
     active_messages = get_active_messages()
@@ -893,61 +986,47 @@ if user_query := st.chat_input("Ask an IT question..."):
     answer_text = ""
     meta: dict = {}
 
+    if comparison_mode:
+        comparison_specs = [
+            ("Exact Match", lambda: run_exact_match(clean_query)),
+            ("Pattern Match", lambda: run_pattern_match(clean_query)),
+            ("Machine Learning", lambda: run_machine_learning(user_query)),
+        ]
+        comparison_results = []
+
+        for label, resolver in comparison_specs:
+            start = perf_counter()
+            result_answer, result_meta = resolver()
+            latency_ms = (perf_counter() - start) * 1000
+            comparison_results.append(
+                {
+                    "label": label,
+                    "answer": result_answer,
+                    "meta": result_meta,
+                    "latency_ms": latency_ms,
+                }
+            )
+
+        answer_text = "Comparison results for your query:"
+        meta = {"comparison_results": comparison_results}
+
     # ------------------------------------------------------------------
     # CORE ROUTING ROUTINES BY ALGORITHM
     # ------------------------------------------------------------------
 
-    # 【Version 1: Exact String Matching】
-    if active_agent == "Version 1: Exact Match Agent":
-        matched_rows = df[df['question'].str.lower().str.strip() == clean_query]
-        if not matched_rows.empty:
-            row = matched_rows.iloc[0]
-            answer_text = row['answer']
-            meta = {"matched_question": row['question'], "topic": row.get('topic')}
-        else:
-            answer_text = "**No exact match.** Exact Match requires the input to mimic a knowledge-base question exactly (case-insensitive, trimmed) — try Pattern Match or Machine Learning instead."
+    # 【Single-agent routing when comparison mode is off】
+    if not comparison_mode:
+        # 【Version 1: Exact String Matching】
+        if active_agent == "Version 1: Exact Match Agent":
+            answer_text, meta = run_exact_match(clean_query)
 
-    # 【Version 2: Pattern & Keyword Matching with Safety Checks】
-    elif active_agent == "Version 2: Pattern Matching Agent":
-        keyword_routes = [
-            (("wifi", "wi-fi", "connection"), "wifi"),
-            (("password", "reset", "lock"), "password"),
-            (("laptop", "screen", "hardware", "display"), "laptop"),
-            (("outlook", "email", "phone"), "outlook"),
-            (("printer", "print"), "printer"),
-            (("vpn",), "vpn"),
-        ]
-        matched_route = next(
-            (route_term for triggers, route_term in keyword_routes if any(t in clean_query for t in triggers)),
-            None,
-        )
-        if matched_route:
-            matches = df[df['question'].str.lower().str.contains(matched_route)]
-            if not matches.empty:
-                row = matches.iloc[0]
-                answer_text = row['answer']
-                meta = {"matched_question": row['question'], "topic": row.get('topic')}
-            else:
-                answer_text = f"Keyword **{matched_route}** was flagged, but no matching knowledge-base entries were found."
-        else:
-            answer_text = "**No key-term detected.** Pattern Match only fires on predefined terms (wifi, password, laptop, outlook, printer, vpn) — try Machine Learning for flexible wording."
+        # 【Version 2: Pattern & Keyword Matching with Safety Checks】
+        elif active_agent == "Version 2: Pattern Matching Agent":
+            answer_text, meta = run_pattern_match(clean_query)
 
-    # 【Version 3: TF-IDF + Cosine Similarity Retrieval】
-    elif active_agent == "Version 3: Machine Learning Agent":
-        answer, matched_question, topic, score = retrieve_best_match(
-            user_query, vectorizer, question_matrix, SIMILARITY_THRESHOLD
-        )
-        if answer is not None:
-            answer_text = answer
-            meta = {
-                "matched_question": matched_question,
-                "topic": topic,
-                "score": score,
-                "threshold": SIMILARITY_THRESHOLD,
-            }
-        else:
-            answer_text = "**No confident match.** Try rephrasing with more specific keywords or system names."
-            meta = {"score": score, "threshold": SIMILARITY_THRESHOLD}
+        # 【Version 3: TF-IDF + Cosine Similarity Retrieval】
+        elif active_agent == "Version 3: Machine Learning Agent":
+            answer_text, meta = run_machine_learning(user_query)
 
     assistant_message = {
         "id": str(uuid4()),
