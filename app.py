@@ -5,6 +5,7 @@ import html
 from time import perf_counter
 from datetime import datetime, timezone
 from uuid import uuid4
+import altair as alt
 import numpy as np
 import streamlit as st
 import pandas as pd
@@ -737,6 +738,138 @@ def evaluate_retrieval(_df: pd.DataFrame, _vectorizer: TfidfVectorizer, threshol
     }
 
 
+@st.cache_resource
+def evaluate_algorithm_dashboard(_df: pd.DataFrame, _vectorizer: TfidfVectorizer, _question_matrix, threshold: float):
+    """Benchmark all three routing strategies over the FAQ questions.
+
+    Each row question is treated as a test query with its own answer as the
+    expected target. The report tracks latency, match outcomes, and per-topic
+    accuracy for visual analytics in the sidebar.
+    """
+
+    keyword_routes = [
+        (("wifi", "wi-fi", "connection"), "wifi"),
+        (("password", "reset", "lock"), "password"),
+        (("laptop", "screen", "hardware", "display"), "laptop"),
+        (("outlook", "email", "phone"), "outlook"),
+        (("printer", "print"), "printer"),
+        (("vpn",), "vpn"),
+    ]
+
+    def exact_runner(query: str, clean_query: str):
+        matched_rows = _df[_df["question"].str.lower().str.strip() == clean_query]
+        if not matched_rows.empty:
+            row = matched_rows.iloc[0]
+            return row["answer"], {"matched_question": row["question"], "topic": row.get("topic")}
+        return None, {}
+
+    def pattern_runner(query: str, clean_query: str):
+        matched_route = next(
+            (route_term for triggers, route_term in keyword_routes if any(t in clean_query for t in triggers)),
+            None,
+        )
+        if matched_route:
+            matches = _df[_df["question"].str.lower().str.contains(matched_route)]
+            if not matches.empty:
+                row = matches.iloc[0]
+                return row["answer"], {"matched_question": row["question"], "topic": row.get("topic")}
+        return None, {}
+
+    def ml_runner(query: str, clean_query: str):
+        query_vec = _vectorizer.transform([query])
+        sims = cosine_similarity(query_vec, _question_matrix)[0]
+        best_idx = int(sims.argmax())
+        best_score = float(sims[best_idx])
+        if best_score < threshold:
+            return None, {"score": best_score, "threshold": threshold}
+        row = _df.iloc[best_idx]
+        return row["answer"], {
+            "matched_question": row["question"],
+            "topic": row.get("topic"),
+            "score": best_score,
+            "threshold": threshold,
+        }
+
+    runners = {
+        "Exact Match": exact_runner,
+        "Pattern Match": pattern_runner,
+        "Machine Learning": ml_runner,
+    }
+
+    records = []
+    for _, row in _df.iterrows():
+        query = str(row["question"])
+        clean_query = query.lower().strip()
+        expected_answer = str(row["answer"])
+        topic = str(row.get("topic", ""))
+
+        for algorithm, runner in runners.items():
+            start = perf_counter()
+            answer, meta = runner(query, clean_query)
+            latency_ms = (perf_counter() - start) * 1000
+
+            has_match = bool(meta.get("matched_question"))
+            is_correct = has_match and str(answer) == expected_answer
+
+            if not has_match:
+                outcome = "No Match"
+            elif is_correct:
+                outcome = "Correct Match"
+            else:
+                outcome = "Incorrect Match"
+
+            records.append(
+                {
+                    "algorithm": algorithm,
+                    "topic": topic if topic else "Uncategorized",
+                    "latency_ms": latency_ms,
+                    "outcome": outcome,
+                    "is_correct": int(is_correct),
+                    "is_matched": int(has_match),
+                }
+            )
+
+    detail_df = pd.DataFrame.from_records(records)
+
+    speed_df = (
+        detail_df.groupby("algorithm", as_index=False)
+        .agg(avg_latency_ms=("latency_ms", "mean"), p95_latency_ms=("latency_ms", lambda s: float(np.percentile(s, 95))))
+        .sort_values("avg_latency_ms")
+    )
+
+    distribution_df = (
+        detail_df.groupby(["algorithm", "outcome"], as_index=False)
+        .size()
+        .rename(columns={"size": "count"})
+    )
+
+    topic_accuracy_df = (
+        detail_df.groupby(["topic", "algorithm"], as_index=False)
+        .agg(accuracy=("is_correct", "mean"), total_queries=("is_correct", "size"))
+    )
+    topic_accuracy_df["accuracy_pct"] = topic_accuracy_df["accuracy"] * 100
+
+    overview_df = (
+        detail_df.groupby("algorithm", as_index=False)
+        .agg(
+            accuracy=("is_correct", "mean"),
+            match_rate=("is_matched", "mean"),
+            avg_latency_ms=("latency_ms", "mean"),
+        )
+    )
+    overview_df["accuracy_pct"] = overview_df["accuracy"] * 100
+    overview_df["match_rate_pct"] = overview_df["match_rate"] * 100
+
+    return {
+        "detail": detail_df,
+        "speed": speed_df,
+        "distribution": distribution_df,
+        "topic_accuracy": topic_accuracy_df,
+        "overview": overview_df,
+        "n_queries": int(len(_df)),
+    }
+
+
 def retrieve_best_match(query: str, vectorizer: TfidfVectorizer, question_matrix, threshold: float):
     """Return (answer, matched_question, topic, score) or (None, None, None, score) if below threshold."""
     query_vec = vectorizer.transform([query])
@@ -805,24 +938,96 @@ if df is None:
 
 vectorizer, question_matrix = build_retrieval_engine(df)
 eval_report = evaluate_retrieval(df, vectorizer, SIMILARITY_THRESHOLD)
+algorithm_dashboard = evaluate_algorithm_dashboard(df, vectorizer, question_matrix, SIMILARITY_THRESHOLD)
 
 # ------------------------------------------------------------------
 # SIDEBAR: CHAT SESSION LIST
 # ------------------------------------------------------------------
 with st.sidebar.expander("Retrieval quality report", expanded=False):
     st.caption(
-        "Held-out split — does TF-IDF similarity retrieve each question's "
-        f"own answer over its {len(df) - 1:,} neighbours?"
+        "Interactive benchmark across Exact Match, Pattern Match, and Machine Learning."
     )
+
+    overview_df = algorithm_dashboard["overview"]
+    speed_df = algorithm_dashboard["speed"]
+    distribution_df = algorithm_dashboard["distribution"]
+    topic_accuracy_df = algorithm_dashboard["topic_accuracy"]
+
+    st.markdown("**Snapshot**")
+    avg_accuracy = float(overview_df["accuracy_pct"].mean()) if not overview_df.empty else 0.0
+    avg_latency = float(overview_df["avg_latency_ms"].mean()) if not overview_df.empty else 0.0
+    k1, k2 = st.columns(2)
+    k1.metric("Avg Accuracy", f"{avg_accuracy:.1f}%")
+    k2.metric("Avg Speed", f"{avg_latency:.2f} ms")
+
+    st.markdown("**Average Response Speed**")
+    speed_chart = (
+        alt.Chart(speed_df)
+        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+        .encode(
+            x=alt.X("algorithm:N", title="Algorithm"),
+            y=alt.Y("avg_latency_ms:Q", title="Average latency (ms)"),
+            color=alt.Color("algorithm:N", legend=None),
+            tooltip=[
+                alt.Tooltip("algorithm:N", title="Algorithm"),
+                alt.Tooltip("avg_latency_ms:Q", format=".3f", title="Avg ms"),
+                alt.Tooltip("p95_latency_ms:Q", format=".3f", title="P95 ms"),
+            ],
+        )
+    )
+    st.altair_chart(speed_chart, use_container_width=True)
+
+    st.markdown("**Match Distribution**")
+    distribution_chart = (
+        alt.Chart(distribution_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("algorithm:N", title="Algorithm"),
+            y=alt.Y("count:Q", title="Queries"),
+            color=alt.Color(
+                "outcome:N",
+                scale=alt.Scale(
+                    domain=["Correct Match", "Incorrect Match", "No Match"],
+                    range=["#2E7D5B", "#D97757", "#B0A99F"],
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip("algorithm:N", title="Algorithm"),
+                alt.Tooltip("outcome:N", title="Outcome"),
+                alt.Tooltip("count:Q", title="Count"),
+            ],
+        )
+    )
+    st.altair_chart(distribution_chart, use_container_width=True)
+
+    st.markdown("**Accuracy Heatmap by Topic**")
+    heatmap = (
+        alt.Chart(topic_accuracy_df)
+        .mark_rect()
+        .encode(
+            x=alt.X("algorithm:N", title="Algorithm"),
+            y=alt.Y("topic:N", title="Topic"),
+            color=alt.Color("accuracy_pct:Q", title="Accuracy %", scale=alt.Scale(scheme="tealblues")),
+            tooltip=[
+                alt.Tooltip("topic:N", title="Topic"),
+                alt.Tooltip("algorithm:N", title="Algorithm"),
+                alt.Tooltip("accuracy_pct:Q", format=".1f", title="Accuracy %"),
+                alt.Tooltip("total_queries:Q", title="Queries"),
+            ],
+        )
+    )
+    st.altair_chart(heatmap, use_container_width=True)
+
+    st.markdown("**ML Retrieval Reference**")
     m1, m2 = st.columns(2)
     m1.metric("Top-1 Accuracy", f"{eval_report['accuracy_at_1']*100:.1f}%")
-    m2.metric("Avg. Confidence", f"{eval_report['avg_similarity']:.2f}")
+    m2.metric("Avg Confidence", f"{eval_report['avg_similarity']:.2f}")
     m3, m4 = st.columns(2)
     m3.metric("Median Confidence", f"{eval_report['median_similarity']:.2f}")
     m4.metric("Above Threshold", f"{eval_report['above_threshold_rate']*100:.1f}%")
     st.caption(
-        f"n = {eval_report['n_test']} held-out questions · "
-        f"threshold = {eval_report['threshold']}"
+        f"Dashboard queries: {algorithm_dashboard['n_queries']:,} · "
+        f"ML held-out n = {eval_report['n_test']} · threshold = {eval_report['threshold']}"
     )
 
 st.sidebar.markdown("### Chat sessions")
