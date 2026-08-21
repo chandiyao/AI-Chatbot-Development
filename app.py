@@ -2,6 +2,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 import re
 import html
+from datetime import datetime, timezone
 from uuid import uuid4
 import numpy as np
 import streamlit as st
@@ -228,6 +229,18 @@ CUSTOM_CSS = """
         font-weight: 500;
     }
 
+    .feedback-label {
+        color: var(--text-muted);
+        font-size: 0.78rem;
+        margin-top: 0.75rem;
+    }
+
+    .feedback-row div[data-testid="stButton"] > button {
+        min-height: 2rem;
+        padding: 0.25rem 0.7rem;
+        font-size: 0.9rem;
+    }
+
     /* confidence meter: slim rounded progress bar */
     .confidence-track {
         display: inline-block;
@@ -408,6 +421,28 @@ def render_chat_message(message: dict) -> None:
                 unsafe_allow_html=True,
             )
 
+        feedback = message.get("feedback")
+        st.markdown("<div class='feedback-label'>Was this response helpful?</div>", unsafe_allow_html=True)
+        feedback_cols = st.columns([1, 1, 8])
+        with feedback_cols[0]:
+            if st.button(
+                "👍",
+                key=f"feedback_up_{message['id']}",
+                type="primary" if feedback == "up" else "secondary",
+                help="Mark this response as helpful",
+            ):
+                message["feedback"] = "up"
+                st.rerun()
+        with feedback_cols[1]:
+            if st.button(
+                "👎",
+                key=f"feedback_down_{message['id']}",
+                type="primary" if feedback == "down" else "secondary",
+                help="Mark this response as not helpful",
+            ):
+                message["feedback"] = "down"
+                st.rerun()
+
 WELCOME_MESSAGE = "Hello. I am your automated IT support agent. Feel free to submit a query regarding wifi setups, password policies, or system issues."
 
 if "active_agent" not in st.session_state:
@@ -420,6 +455,7 @@ if "chat_sessions" not in st.session_state:
             "title": "New Chat",
             "messages": [
                 {
+                    "id": str(uuid4()),
                     "role": "assistant",
                     "content": WELCOME_MESSAGE,
                 }
@@ -455,6 +491,7 @@ def create_new_chat() -> None:
         "title": "New Chat",
         "messages": [
             {
+                "id": str(uuid4()),
                 "role": "assistant",
                 "content": WELCOME_MESSAGE,
             }
@@ -467,6 +504,7 @@ def clear_chat_history() -> None:
     active_session = get_active_session()
     active_session["messages"] = [
         {
+            "id": str(uuid4()),
             "role": "assistant",
             "content": WELCOME_MESSAGE,
         }
@@ -538,13 +576,17 @@ def migrate_legacy_chat_titles() -> None:
 
 migrate_legacy_chat_titles()
 
+for session in st.session_state.chat_sessions:
+    for message in session.get("messages", []):
+        message.setdefault("id", str(uuid4()))
+
 # ------------------------------------------------------------------
 # BACKEND: DATA LOADING & ML INITIALIZATION
 # ------------------------------------------------------------------
 @st.cache_resource
 def load_data():
     """
-    Load and adapt the raw support-ticket export (it_dataset.csv) into the
+    Load and adapt the raw support-ticket export (it_support_dataset.csv) into the
     topic/question/answer shape the retrieval engine expects.
 
     The source file is a multilingual customer-support ticket dump with
@@ -564,23 +606,37 @@ def load_data():
          usable question or answer after the fallback.
     """
     try:
-        df = pd.read_csv("it_dataset.csv", engine="python", on_bad_lines="skip")
+        df = pd.read_csv("it_support_dataset.csv", engine="python", on_bad_lines="skip")
     except FileNotFoundError:
         return None
 
-    df = df[df["language"] == "en"].copy()
+    if {"question", "answer"}.issubset(df.columns):
+        df = df.copy()
+        df["question"] = df["question"].astype(str).str.strip()
+        if "topic" in df.columns:
+            df["topic"] = df["topic"].astype(str).str.strip()
+        else:
+            df["topic"] = ""
+    else:
+        if "language" in df.columns:
+            df = df[df["language"].astype(str).str.lower().eq("en")].copy()
 
-    def fallback_question(row) -> str:
-        subject = str(row.get("subject", "")).strip()
-        if subject and subject.lower() != "nan":
-            return subject
-        body = str(row.get("body", "")).strip()
-        body = re.sub(r"\s+", " ", body)
-        return body[:80].strip()
+        def fallback_question(row) -> str:
+            subject = str(row.get("subject", "")).strip()
+            if subject and subject.lower() != "nan":
+                return subject
+            body = str(row.get("body", "")).strip()
+            body = re.sub(r"\s+", " ", body)
+            return body[:80].strip()
 
-    df["question"] = df.apply(fallback_question, axis=1)
+        df["question"] = df.apply(fallback_question, axis=1)
+        topic_column = "queue" if "queue" in df.columns else "topic"
+        if topic_column in df.columns:
+            df["topic"] = df[topic_column].astype(str).str.strip()
+        else:
+            df["topic"] = ""
+
     df["answer"] = df["answer"].astype(str).str.strip()
-    df["topic"] = df["queue"].astype(str).str.strip()
 
     df = df[(df["question"] != "") & (df["answer"] != "") & (df["answer"].str.lower() != "nan")]
     df = df.drop_duplicates(subset=["question", "answer"])
@@ -699,6 +755,37 @@ if st.sidebar.button("Clear Chat History", use_container_width=True):
     clear_chat_history()
     st.rerun()
 
+chat_export_lines = [
+    "IT Chat History",
+    f"Exported: {datetime.now(timezone.utc).isoformat()}",
+    f"Active agent: {st.session_state.active_agent}",
+    "",
+]
+for session_number, session in enumerate(st.session_state.chat_sessions, start=1):
+    chat_export_lines.extend([
+        f"SESSION {session_number}: {format_session_title(session)}",
+        f"Session ID: {session['id']}",
+        "-" * 72,
+    ])
+    for message in session.get("messages", []):
+        role = "User" if message.get("role") == "user" else "Assistant"
+        chat_export_lines.extend([
+            f"{role}:",
+            str(message.get("content", "")),
+        ])
+        if message.get("feedback"):
+            chat_export_lines.append(f"Feedback: {message['feedback']}")
+        chat_export_lines.append("")
+    chat_export_lines.append("")
+
+st.sidebar.download_button(
+    "Download Chat History",
+    data="\n".join(chat_export_lines),
+    file_name="it-chat-history.txt",
+    mime="text/plain",
+    use_container_width=True,
+)
+
 st.sidebar.markdown("### Recent")
 st.sidebar.markdown("<div style='border-top:1px solid var(--border); margin: -0.4rem 0 0.6rem 0;'></div>", unsafe_allow_html=True)
 
@@ -796,7 +883,7 @@ with chat_container:
 # Capture user interactions
 if user_query := st.chat_input("Ask an IT question..."):
     active_session = get_active_session()
-    user_message = {"role": "user", "content": user_query}
+    user_message = {"id": str(uuid4()), "role": "user", "content": user_query}
     active_session["messages"].append(user_message)
     update_active_session_title(user_query)
     render_chat_message(user_message)
@@ -863,6 +950,7 @@ if user_query := st.chat_input("Ask an IT question..."):
             meta = {"score": score, "threshold": SIMILARITY_THRESHOLD}
 
     assistant_message = {
+        "id": str(uuid4()),
         "role": "assistant",
         "content": answer_text,
         "agent": active_agent,
